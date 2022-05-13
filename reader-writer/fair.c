@@ -343,10 +343,6 @@ char *img5[L5] = {
  * alive 값이 0이 되면 무한 루프를 빠져나와 스레드를 자연스럽게 종료한다.
  */
 int alive = 1;
-int r_cnt = 0;
-pthread_mutex_t shared_variables;
-pthread_mutex_t r_gate;
-pthread_mutex_t w_gate;
 
 /*
  * Reader 스레드는 같은 문자를 L0번 출력한다. 예를 들면 <AAA...AA> 이런 식이다.
@@ -366,11 +362,6 @@ void *reader(void *arg)
      * 스레드가 살아 있는 동안 같은 문자열 시퀀스 <XXX...XX>를 반복해서 출력한다.
      */
     while (alive) {
-        pthread_mutex_lock(&r_gate);
-        pthread_mutex_lock(&shared_variables);
-        if(r_cnt++ == 0) pthread_mutex_lock(&w_gate);
-        pthread_mutex_unlock(&shared_variables);
-        pthread_mutex_unlock(&r_gate); // reader는 최대한 중복하여 실행
         /*
          * Begin Critical Section
          */
@@ -381,9 +372,6 @@ void *reader(void *arg)
         /* 
          * End Critical Section
          */
-        pthread_mutex_lock(&shared_variables);
-        if(--r_cnt == 0) pthread_mutex_unlock(&w_gate);
-        pthread_mutex_unlock(&shared_variables);
     }
     pthread_exit(NULL);
 }
@@ -409,9 +397,6 @@ void *writer(void *arg)
      * 스레드가 살아 있는 동안 같은 이미지를 반복해서 출력한다.
      */
     while (alive) {
-        pthread_mutex_lock(&r_gate);
-        pthread_mutex_lock(&w_gate);
-        pthread_mutex_unlock(&r_gate);
         /*
          * Begin Critical Section
          */
@@ -449,7 +434,6 @@ void *writer(void *arg)
         req.tv_sec = 0;
         req.tv_nsec = rand() % SLEEPTIME;
         nanosleep(&req, NULL);
-        pthread_mutex_unlock(&w_gate);
     }
     pthread_exit(NULL);
 }
@@ -465,14 +449,11 @@ int main(void)
     int rarg[NREAD], warg[NWRITE];
     pthread_t rthid[NREAD];
     pthread_t wthid[NWRITE];
-    struct timespec req, rem;
+    struct timespec req;
 
     /*
      * Create NREAD reader threads
      */
-    pthread_mutex_init(&r_gate, NULL);
-    pthread_mutex_init(&w_gate, NULL);
-    pthread_mutex_init(&shared_variables, NULL);
     for (i = 0; i < NREAD; ++i) {
         rarg[i] = i;
         if (pthread_create(rthid+i, NULL, reader, rarg+i) != 0) {

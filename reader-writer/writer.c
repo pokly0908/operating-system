@@ -343,12 +343,13 @@ char *img5[L5] = {
  * alive 값이 0이 되면 무한 루프를 빠져나와 스레드를 자연스럽게 종료한다.
  */
 int alive = 1;
-int reader_count = 0;  //진행중인 reader의 수
-int writer_count = 0;  //진행중인 writer의 수
-
-pthread_mutex_t mutex; 
-pthread_cond_t reader_cond; //reader가 cs에 들어갈 수 없을떄 기다리는 조건변수
-pthread_cond_t writer_cond; //writer가 cs에 들어갈 수 없을때 기다리는 조건변수
+int reader_count = 0; //실행중인 reader의 수   
+int writer_wait = 0;  //기다리는 writer의 수
+int reader_wait = 0;  //기다리는 reader의 수
+int run_writer = 0;   //writer가 실행중이면 1 아니면 0
+pthread_mutex_t mutex;
+pthread_cond_t r_con;
+pthread_cond_t w_con;
 
 /*
  * Reader 스레드는 같은 문자를 L0번 출력한다. 예를 들면 <AAA...AA> 이런 식이다.
@@ -369,9 +370,9 @@ void *reader(void *arg)
      */
     while (alive) {
         pthread_mutex_lock(&mutex);
+        while(writer_wait > 0) //writer에서 기다리고 있는경우
+            pthread_cond_wait(&r_con, &mutex); //reader대기 시킴 (writer먼저 돌려야하니)
         reader_count++;
-        while(writer_count > 0)
-            pthread_cond_wait(&reader_cond, &mutex);
         pthread_mutex_unlock(&mutex);
         /*
          * Begin Critical Section
@@ -385,8 +386,7 @@ void *reader(void *arg)
          */
         pthread_mutex_lock(&mutex);
         reader_count--;
-        if(reader_count == 0)
-            pthread_cond_signal(&writer_cond);
+        if(reader_count == 0)pthread_cond_signal(&w_con); //reader가 끝났을 경우 writer에 신호를 보냄 (reader엔 할일이 없으니)
         pthread_mutex_unlock(&mutex);
     }
     pthread_exit(NULL);
@@ -414,11 +414,11 @@ void *writer(void *arg)
      */
     while (alive) {
         pthread_mutex_lock(&mutex);
-        while(writer_count > 0)
-            pthread_cond_wait(&writer_cond, &mutex);
-        writer_count++;
+        writer_wait++;
+        while(reader_count > 0 || run_writer == 1) //reader가 실행중이거나 writer가 실행중일 경우 간섭을 하지 않기 위해 다음 writer를 대기
+            pthread_cond_wait(&w_con, &mutex);
+        run_writer = 1; //시작했단뜻
         pthread_mutex_unlock(&mutex);
-
         /*
          * Begin Critical Section
          */
@@ -450,6 +450,7 @@ void *writer(void *arg)
         /* 
          * End Critical Section
          */
+
         /*
          * 이미지 출력 후 SLEEPTIME 나노초 안에서 랜덤하게 쉰다.
          */
@@ -457,11 +458,10 @@ void *writer(void *arg)
         req.tv_nsec = rand() % SLEEPTIME;
         nanosleep(&req, NULL);
         pthread_mutex_lock(&mutex);
-        writer_count--;
-        if(writer_count > 0)
-            pthread_cond_signal(&writer_cond);
-        else
-            pthread_cond_broadcast(&reader_cond);
+        run_writer = 0; //끝났다는뜻
+        writer_wait--;
+        if(writer_wait > 0) pthread_cond_signal(&w_con); //writer가 남은경우
+        else pthread_cond_broadcast(&r_con); //writer를 모두 실행시켰으면
         pthread_mutex_unlock(&mutex);
 
     }
@@ -481,9 +481,9 @@ int main(void)
     pthread_t wthid[NWRITE];
     struct timespec req;
 
-    pthread_mutex_init(&mutex, NULL);       //초
-    pthread_cond_init(&reader_cond, NULL);  //기
-    pthread_cond_init(&writer_cond, NULL);  //화
+    pthread_mutex_init(&mutex, NULL);
+    pthread_cond_init(&r_con, NULL);
+    pthread_cond_init(&w_con, NULL);
 
     /*
      * Create NREAD reader threads

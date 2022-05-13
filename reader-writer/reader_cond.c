@@ -371,8 +371,8 @@ void *reader(void *arg)
      */
     while (alive) {
         pthread_mutex_lock(&mutex); //공유변수를 조회하기위한 락
+        reader_wait++;
         while (writer_count == 1) { //reader가 임계구역에 들어갈 수 있지 확인
-            ++reader_wait;
             pthread_cond_wait(&reader_cond, &mutex); //만족하지않으면 reader_cond에서 대기
         }
         ++reader_count;
